@@ -1,0 +1,319 @@
+---
+title: 'compgen2021: Week 2 exercises'
+author: "O. Daniel López Olmos"
+output:
+  html_document:
+    df_print: paged
+  pdf: default
+  pdf_document: default
+---
+
+# Exercises for Week2
+
+For this set of exercises we will be using the expression data shown below:
+```{r dataLoadClu}
+
+expFile <- system.file("extdata",
+                    "leukemiaExpressionSubset.rds",
+                    package = "compGenomRData")
+matrix <- readRDS(expFile)
+
+```
+
+### Clustering
+
+1. We want to observe the effect of data transformation in this exercise. Scale the expression matrix with the `scale()` function. In addition, try taking the logarithm of the data with the `log2()` function prior to scaling. Make box plots of the unscaled and scaled data sets using the `boxplot()` function. [Difficulty: **Beginner/Intermediate**]
+
+**solution:**
+Since scaling brings expression values to the same scale, we can appreciate the effect of this in the second plot, which shows no significant variation in the median of the data.
+```{r,echo=TRUE}
+
+#takig the logarithm base 2 of the data
+matux <- log2(matrix)
+#scaling matrix
+scaledMatrix <- scale(matux)
+
+#boxplot of unscaled matrix
+boxplot(matux, log = "y", main = "Unscaled data", col = "lightblue",
+        ylab = "Expression values in log scale", names = NULL)
+#boxplot of scaled matrix
+# since scaling the data gives negative values, log scale could not be used
+boxplot(scaledMatrix, main = "Scaled data", col = "lightblue",
+        ylab = "Expression values", names = NULL)
+```
+
+
+2. For the same problem above using the unscaled data and different data transformation strategies, use the `ward.d` distance in hierarchical clustering and plot multiple heatmaps. You can try to use the `pheatmap` library or any other library that can plot a heatmap with a dendrogram. Which data-scaling strategy provides more homogeneous clusters with respect to disease types? [Difficulty: **Beginner/Intermediate**]
+
+**solution:**
+Given the plots below, both logarithmic transformations(base 2 and base 10) provide slightly more homogeneous clusters in comparison to normalized data and square-root data. Using these last two strategies, the clustering algorithm miss classifies one CML case as AML, so it is better option to use logarithmic transformations for our expression data.
+```{r}
+library(pheatmap)
+
+#set the leukemia type annotation for each sample
+annotation_col = data.frame(
+                    LeukemiaType = substr(colnames(matux),1,3))
+rownames(annotation_col) = colnames(matux)
+  
+#plot heatmap for unscaled data and log2 values
+pheatmap(matux, main = "Heatmap of unscaled-log2 data", 
+         show_rownames = FALSE, show_colnames = FALSE,
+         annotation_col = annotation_col,
+         scale = "none", clustering_method = "ward.D",
+         clustering_distance_cols = "euclidean")
+```
+
+```{r}
+#heatmap of unscaled and log10 values
+
+#extract log10 values of the data
+log10Matrix <- log(matrix)
+
+pheatmap(log10Matrix, main = "Heatmap of unscaled-log10 data", 
+         show_rownames = FALSE, show_colnames = FALSE,
+         annotation_col = annotation_col,
+         scale = "none", clustering_method = "ward.D",
+         clustering_distance_cols = "euclidean")
+```
+
+
+```{r}
+library(BBmisc)
+#heatmap of unscaled and NORMALIZED data
+
+#normalize data with BBmisc
+normalMatrix <- normalize(matrix, method = "range", range = c(0,1))
+#plot heatmap
+pheatmap(normalMatrix,main = "Heatmap of normalized data",
+         show_rownames = FALSE, show_colnames = FALSE,
+         annotation_col = annotation_col,
+         scale = "none", clustering_method = "ward.D",
+         clustering_distance_cols = "euclidean")
+
+```
+
+
+```{r}
+#heatmap of unscaled and SQUARE-ROOT transformed data
+
+#get the square-root of the data
+sqrtMatrix <- sqrt(matrix)
+
+pheatmap(sqrtMatrix,main = "Heatmap of sqrt transformed data",
+         show_rownames = FALSE, show_colnames = FALSE,
+         annotation_col = annotation_col,
+         scale = "none", clustering_method = "ward.D",
+         clustering_distance_cols = "euclidean")
+```
+
+
+3. For the transformed and untransformed data sets used in the exercise above, use the silhouette for deciding number of clusters using hierarchical clustering. [Difficulty: **Intermediate/Advanced**]
+
+**solution:**
+#### Silhoutte method using a number of ks 2-7 shows that the optimal number of clusters is 2.
+Note: I had to use the 'factoextra' package because the 'clusGap' function requires a specified function, which 'hclust' could not satisfy.
+```{r}
+#library(factoextra)
+suppressPackageStartupMessages(library(factoextra))
+set.seed(1244)
+
+#silhouette method for untransformed data and maximum number of clusters=7
+fviz_nbclust(matrix, FUN = hcut, hc_func = "hclust", hc_method = "complete", method = "silhouette", k.max = 7) +
+  labs(subtitle = "Silhouette method for hierarchical clustering-untransformed data")
+ 
+```
+
+#### Silhouette method for transformed data.
+```{r}
+set.seed(2005)
+
+#silhouette method for trasformed data and maximum number of clusters=7
+fviz_nbclust(scaledMatrix, FUN = hcut, hc_func = "hclust", hc_method = "complete", method = "silhouette", k.max = 7) +
+  labs(subtitle = "Silhouette method for hierarchical clustering-transfomed data")
+ 
+```
+
+
+4. Now, use the Gap Statistic for deciding the number of clusters in hierarchical clustering. Is the same number of clusters identified by two methods? Is it similar to the number of clusters obtained using the k-means algorithm in the unsupervised learning chapter. [Difficulty: **Intermediate/Advanced**]
+
+**solution:**
+#### The gap statistic method suggests that the optimal number of clusters is 10, which is the top number of clusters used in the method, however the statistic curve begins to be stable at k=6. So the suggested number of clusters for the 'gap statistic' is not the same as the one we obtained from the 'silhouette method' (2!=6). Nevertheless, the number of clusters is similar to the one obtained using the k-means algorithm in the unsupervised learning chapter (6=6).
+Since 'silhouette' and 'clusGap' require specific arguments which 'hclust' cannot satisfy, I chose to use functions from the 'factoextra' package in order to implement the required methods.
+```{r}
+set.seed(1435)
+
+#the gap statistic method in one line 
+fviz_nbclust(matrix, FUN = hcut, k.max = 12, nstart = 25,  method = "gap_stat", nboot = 50,
+             verbose = F) +
+  labs(subtitle = "Gap statistic method for hierarchical cluster")
+```
+
+### Dimension reduction
+We will be using the leukemia expression data set again. You can use it as shown in the clustering exercises.
+
+1. Do PCA on the expression matrix using the `princomp()` function and then use the `screeplot()` function to visualize the explained variation by eigenvectors. How many top components explain 95% of the variation? [Difficulty: **Beginner**]
+
+**solution:**
+
+```{r}
+#PCA of scaled data
+PCA <- princomp(scaledMatrix)
+#visualize the explained variation of the components
+screeplot(PCA, col = "lightblue")
+
+#show the explained variance of each component
+exp_var <- PCA$sdev^2
+#proportions explained
+exp_var <- (exp_var / sum(exp_var)) * 100 
+#number of components
+PC <- 1:length(PCA$sdev)
+#create dataframe
+exp_var <- data.frame(exp_var, PC)
+#get the cumsum of the variance
+exp_var$var_cum <- cumsum(exp_var$exp_var)
+#set the proportion
+prop = 95
+#print the number of components explaining the proportion
+n_comps <- exp_var[exp_var$var_cum >= prop, 2][1]
+cat("Number of components explaining 95% of the variation: ", n_comps)
+```
+
+2. Our next tasks are removing the eigenvectors and reconstructing the matrix using SVD, then we need to calculate the reconstruction error as the difference between the original and the reconstructed matrix. HINT: You have to use the `svd()` function and equalize eigenvalue to $0$ for the component you want to remove. [Difficulty: **Intermediate/Advanced**]
+
+**solution:**
+For calculating the reconstruction error, we  define a function to calculate euclidean distance between the matrices and the result is a matrix with the same dimensions as the two matrices.
+```{r}
+
+#perform SVD on the original matrix
+x <- svd(scale(matrix))
+
+#remove top 5 components by equalizing eigenvalues to 0
+x$d[1:5] = 0
+#reconstruct the expression matrix
+reconMatrix <- x$u %*% diag(x$d) %*% t(x$v)
+
+#define euclidean distance function
+euclideanDist <- function(m, n){
+  sqrt(sum((m - n)^2))
+}
+#calculate reconstruction error using outer function
+reconError <- outer(matrix, reconMatrix, Vectorize(euclideanDist))
+```
+
+
+3. Produce a 10-component ICA from the expression data set. Remove each component and measure the reconstruction error without that component. Rank the components by decreasing reconstruction-error. [Difficulty: **Advanced**]
+
+**solution:**
+```{r}
+library(fastICA)
+
+#10-component ICA
+ICA <- fastICA(t(matrix), n.comp = 10)
+
+#remove the 1st component 
+ICA$A[,1] = 0
+#reconstruct the matrix
+reconMat_1 <- ICA$S %*% ICA$A
+#calculate reconstruction error
+error_1 <- outer(matrix, reconMat_1, Vectorize(euclideanDist))
+
+#remove the 2nd component 
+ICA$A[,2] = 0
+#reconstruct the matrix
+reconMat_2 <- ICA$S %*% ICA$A
+#calculate reconstruction error
+error_2 <- outer(matrix, reconMat_2, Vectorize(euclideanDist))
+
+#remove the 3rd component 
+ICA$A[,3] = 0
+#reconstruct the matrix
+reconMat_3 <- ICA$S %*% ICA$A
+#calculate reconstruction error
+error_3 <- outer(matrix, reconMat_3, Vectorize(euclideanDist))
+
+#remove the 4th component 
+ICA$A[,4] = 0
+#reconstruct the matrix
+reconMat_4 <- ICA$S %*% ICA$A
+#calculate reconstruction error
+error_4 <- outer(matrix, reconMat_4, Vectorize(euclideanDist))
+
+#remove the 5th component 
+ICA$A[,5] = 0
+#reconstruct the matrix
+reconMat_5 <- ICA$S %*% ICA$A
+#calculate reconstruction error
+error_5 <- outer(matrix, reconMat_5, Vectorize(euclideanDist))
+
+#remove the 6th component 
+ICA$A[,6] = 0
+#reconstruct the matrix
+reconMat_6 <- ICA$S %*% ICA$A
+#calculate reconstruction error
+error_6 <- outer(matrix, reconMat_6, Vectorize(euclideanDist))
+
+#remove the 7th component 
+ICA$A[,7] = 0
+#reconstruct the matrix
+reconMat_7 <- ICA$S %*% ICA$A
+#calculate reconstruction error
+error_7 <- outer(matrix, reconMat_7, Vectorize(euclideanDist))
+
+#remove the 8th component 
+ICA$A[,8] = 0
+#reconstruct the matrix
+reconMat_8 <- ICA$S %*% ICA$A
+#calculate reconstruction error
+error_8 <- outer(matrix, reconMat_8, Vectorize(euclideanDist))
+
+#remove the 9th component 
+ICA$A[,9] = 0
+#reconstruct the matrix
+reconMat_9 <- ICA$S %*% ICA$A
+#calculate reconstruction error
+error_9 <- outer(matrix, reconMat_9, Vectorize(euclideanDist))
+
+#remove the 10th component 
+ICA$A[,10] = 0
+#reconstruct the matrix
+reconMat_10 <- ICA$S %*% ICA$A
+#calculate reconstruction error
+error_10 <- outer(matrix, reconMat_10, Vectorize(euclideanDist))
+```
+
+
+4. In this exercise we use the `Rtsne()` function on the leukemia expression data set. Try to increase and decrease perplexity t-sne, and describe the observed changes in 2D plots. [Difficulty: **Beginner**]
+
+**solution:**
+In the unsupervised learning chapter, each cluster's data point is closer to each other and the general structure of the clustering itself seem to be more condensed. But in this exercise, when using different lower and higher values of perplexity(5 and 12) cluster's data points seem to be a little more dispersed, as well as clusters themselves. An interesting thing to notice is that the 2D tSNE representation appears to be the almost the same clustering, but with a rotation in the data space. In addition, when using perplexity=5 the algorithm yields reasonably differentiated clusters.
+```{r}
+library("Rtsne")
+set.seed(141) 
+
+#tSNE with low perplexity
+tsneDec <- Rtsne(t(matrix),perplexity = 5) 
+#plot the results
+plot(tsneDec$Y, main = "tSNE with perplexity=5",
+     col = as.factor(annotation_col$LeukemiaType), pch=19)
+#create legend
+legend("bottomright",
+       legend = unique(annotation_col$LeukemiaType),
+       fill = palette("default"),
+       border = NA,
+       box.col = NA)
+
+#tSNE with high perplexity
+tsneInc <- Rtsne(t(matrix),perplexity = 12) 
+#plot the results
+plot(tsneInc$Y, main = "tSNE with perplexity=12",
+     col = as.factor(annotation_col$LeukemiaType), pch = 19)
+# create the legend for the Leukemia types
+legend("bottomright",
+       legend = unique(annotation_col$LeukemiaType),
+       fill = palette("default"),
+       border = NA,
+       box.col = NA)
+ 
+```
+
+

@@ -1,0 +1,269 @@
+---
+title: "Data analysis challenge"
+date: "15/07/2022"
+output: html_document
+---
+# Predecir los niveles de metilacion segun la edad. ¿Que otras variables son buenos predictores? ¿Que algoritmos se acoplan a la tarea? Menciona los paquetes. EDA to make hypothesis.
+```{r}
+#import libraries
+library(tidyverse, quietly = T)
+library(tidymodels, quietly = T)
+library(magrittr, quietly = T)
+
+```
+
+```{r}
+#import data
+
+subjects_data <- read.table("~/ML4Genom2021/data/subjects.txt", sep="\t", header=T)
+methyl_data <- read.table("~/ML4Genom2021/data/metRmOlWithDbgapId.txt", sep="\t", header=T)
+methyl_data_t <- methyl_data %>% select(-dbGapSubjctId) %>% t()
+#fix column names and remove non-predictor columns
+rownames(methyl_data_t) <- str_remove(rownames(methyl_data_t), 'X')
+methyl_tib <- as_tibble(methyl_data_t)
+subjects_data <- subjects_data %>% select(-ID)
+
+#join predictors
+data<- try(cbind(subjects_data, methyl_data_t))
+data <- cbind(subjects_data, methyl_data_t)
+```
+
+### Let's explore the distribution of ages in our data.
+```{r}
+
+data %>% ggplot() +
+  geom_histogram(aes(Age), binwidth = 1) +
+  facet_wrap(~sex)
+```
+### There are more unborn subjects in both sex groups, so we will create 2 groups: 1) Unborn subjects and 2) Born subjects. To confrim this, we count the number of unborn and born subjects.
+```{r}
+unborn = data$Age < 0
+born = data$Age > 0
+
+table(born, unborn)
+```
+
+### We can analyse if there's some difference in methylation patterns between unborn and born individuals. Let's explore that with a dotplot...
+```{r}
+#create age groups
+data %<>% mutate(status = case_when(as.integer(Age) <= 0 ~ "Unborn",
+                                               TRUE ~ "Born"))
+data %<>% relocate(status, .after = Race)
+#drop ID column(not a predictor)
+data <- data %>% select(!dbGaP.ID)
+
+#calculate mean methylation per patient
+data$meanMethylation <- data %>% select(-c(Age, sex, Race, status)) %>%
+                          apply(., 1, mean)
+
+#plotting
+data %>% ggplot(aes(Age, meanMethylation, color = status)) + 
+  geom_point() +
+  labs(title = "Mean methylation per patient")
+```
+
+## Is there a difference in methylation patterns between gender groups? 
+```{r}
+data %>% ggplot(aes(Age, meanMethylation, color = status)) + 
+  geom_point() +
+  labs(title = "Mean methylation per patient and stratiffied by gender") +
+  facet_wrap(~sex)
+```
+
+## Main question: What is the relationship between age and methylation?
+Para encontrar los loci mas relevantes podemos hacer PCA y otro analisis de componentes
+
+
+
+
+# Building the model 
+
+Let's consider how to [spend our data budget](https://www.tmwr.org/splitting.html):
+
+- create training and testing sets
+- create resampling folds from the *training* set
+
+```{r}
+set.seed(113)
+
+#split data
+penguin_initial <- initial_split(penguins, strata = sex)
+penguin_train <- training(penguin_split)
+penguin_test <- testing(penguin_split)
+
+set.seed(114)
+penguin_folds <- vfold_cv(penguin_train, strata = sex)
+penguin_folds
+```
+
+Let's create a [**model specification**](https://www.tmwr.org/models.html) for each model we want to try:
+
+```{r}
+library(BayesFactor, quietly = T)
+
+#¿QUE NOS DICE ESTA PRUEBA(TAREA5)?
+ttestBF(x = data$meanMethylation[data$status == "Born"],
+        y = data$meanMethylation[data$status == "Unborn"], paired = F)
+```
+
+# MODELING
+
+## Before modeling, we will check the normality of the target variable
+```{r}
+ggplot(data, aes(sample = meanMethylation)) + 
+  stat_qq(alpha = 0.5) + 
+  stat_qq_line(color = "red") + 
+  labs(title = "Q-Q plot of methylation variable", x = "Theoretical", y = "Sample")
+```
+
+```{r}
+shapiro.test(data$meanMethylation)
+```
+
+## It seems that our data doesn't follow a normal distribution, we will transform this data...
+```{r}
+library(bestNormalize)
+
+#normalizing target variable
+normal_target <- bestNormalize(data$meanMethylation)
+#adding normalized values
+data$normalized_meanMethylation <- normal_target$x.t
+
+#visualize to confirm the transformation
+ggplot(data, aes(sample = normalized_meanMethylation)) + 
+  stat_qq(alpha = 0.5) + 
+  stat_qq_line(color = "red") + 
+  labs(title = "Grafica cuantil-cuantil de la variable 'peso'", x = "Teoréticos", y = "Muestra")
+```
+
+```{r}
+shapiro.test(data$normalized_meanMethylation)
+
+```
+# Linear Model
+```{r}
+#instantiating linear model
+linear_model <- lm(data = data, normalized_meanMethylation ~ Age)
+linear_model
+
+```
+
+```{r}
+summary(linear_model)
+```
+
+## Plotting the model
+```{r}
+ggplot(data, aes(x = Age, y = normalized_meanMethylation)) +
+  geom_point() +
+  geom_smooth(method = lm) +
+  labs(title = "Linear model explaining methylation mean by Age", x = "Mean ethylation", y = "Age")
+```
+
+## Plotting differences between expected and actual values
+```{r}
+#add predicted values and residuals
+data$predicted <- linear_model$fitted.values
+data$residuals <- linear_model$residuals
+
+#AGREGAR LABELS A LOS PUNTOS, ACTUAL Y PREDICTED
+ggplot(data, aes(x = Age, y = normalized_meanMethylation)) +
+  geom_smooth(method = lm) + 
+  geom_segment(aes(xend = Age, yend = predicted)) + 
+  geom_point(aes(y = predicted)) +  
+  geom_point(color = "red") + 
+  labs(title = "", x = "Age", y = "Mean methylation")
+
+```
+
+```{r}
+data$index <- 1:nrow(data) 
+
+ggplot(data, aes(x = index, y = residuals)) + 
+  geom_point() +
+  labs(title = "Residuals plot", x = "Index", y = "Residuals")
+```
+
+##CONCLUSIONES DE ESTE MODELO(R2: PODRIA NO SER UN BUEN VALOR(TAREA 6))
+##ADICIONALMENTE PODEMOS USAR UN MODELO LINEAL MULTIPLE(TAREA 6)
+
+# PCA
+
+
+```{r}
+
+GLM_spec <- logistic_reg() %>%
+      set_engine("glm")
+
+RF_spec <- rand_forest(trees = 1e3) %>%
+  set_engine("ranger") %>%
+  set_mode("classification")
+```
+
+
+Now let's build a [**model workflow**](https://www.tmwr.org/workflows.html) combining each model specification with a data preprocessor:
+
+```{r}
+penguin_formula <- sex ~ .
+
+GLM_wf    <- workflow(penguin_formula, glm_spec)
+RF_wf <- workflow(penguin_formula, ranger_spec)
+```
+
+If your feature engineering needs are more complex than provided by a formula like `sex ~ .`, use a [recipe](https://www.tidymodels.org/start/recipes/). [Read more about feature engineering with recipes](https://www.tmwr.org/recipes.html) to learn how they work.
+
+
+# Evaluating the models
+
+These models have no tuning parameters so we can evaluate them as they are. [Learn about tuning hyperparameters here.](https://www.tidymodels.org/start/tuning/)
+
+```{r}
+control_preds <- control_resamples(save_pred = TRUE)
+
+GLM_results <- fit_resamples(GLM_wf,
+                            resamples = penguin_folds,
+                            control = contrl_preds)
+
+RF_rs <- fit_resamples(
+  ranger_wf,
+  resamples = penguin_folds,
+  control = contrl_preds
+)
+```
+
+How did these two models compare?
+
+```{r}
+collect_metrics(glm_rs)
+collect_metrics(ranger_rs)
+```
+
+We can visualize these results using an ROC curve (or a confusion matrix via `conf_mat()`):
+
+```{r}
+bind_rows(
+  collect_predictions(glm_rs) %>%
+    mutate(mod = "glm"),
+  collect_predictions(ranger_rs) %>%
+    mutate(mod = "ranger")
+) %>%
+  group_by(mod) %>%
+  roc_curve(sex, .pred_female) %>%
+  autoplot()
+```
+
+These models perform very similarly, so perhaps we would choose the simpler, linear model. The function `last_fit()` *fits* one final time on the training data and *evaluates* on the testing data. This is the first time we have used the testing data.
+
+```{r}
+final_fitted <- last_fit(glm_wf, penguin_split)
+collect_metrics(final_fitted)  ## metrics evaluated on the *testing* data
+```
+
+This object contains a fitted workflow that we can use for prediction.
+
+```{r}
+final_wf <- extract_workflow(final_fitted)
+predict(final_wf, penguin_test[55,])
+```
+
+You can save this fitted `final_wf` object to use later with new data, for example with `readr::write_rds()`.

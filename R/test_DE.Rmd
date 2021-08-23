@@ -1,0 +1,102 @@
+---
+title: "test_DE"
+author: "Daniel López"
+date: "7/14/2022"
+output: html_document
+---
+
+```{r, message=FALSE, warning=FALSE}
+
+library(tidyverse)
+
+#library(tidybulk)
+#library(tidyHeatmap)
+```
+
+```{r}
+# load data
+library(airway, quietly = T)
+
+data(airway)
+airway
+```
+
+```{r}
+#load data in tidy form
+library(tidySummarizedExperiment, quietly = T)
+airway
+```
+
+```{r}
+counts <- airway %>%
+    mutate(sample_name = str_remove(.sample, 'SRR1039'))
+
+counts
+```
+## Filter low transcribed genes
+
+```{r}
+# filter low transciribed genes
+library(tidybulk, quietly = T)
+
+counts_filtered <- counts %>%
+    keep_abundant(factor_of_interest = dex) # keep abundant genes, factor_of_interest determines our grouping
+
+counts_filtered  
+```
+
+## Normalize counts 
+```{r}
+# sacaling data
+counts_scaled <- counts_filtered %>% scale_abundance()
+counts_scaled
+```
+
+## Visualize density 
+```{r, out.width='70%'}
+counts_scaled %>%
+  pivot_longer(cols = c('counts', 'counts_scaled'), #reshaping
+               names_to = 'source',
+               values_to = 'abundance') %>%
+  ggplot(aes(x = abundance + 1, color = sample_name)) + 
+    geom_density() +
+    facet_wrap(~source) +
+    scale_x_log10()
+```
+
+## EDA
+### Dimension reduction
+```{r}
+# PCA
+# joins the resulted PCs to the counts object
+counts_scaled_PCA <- counts_scaled %>% reduce_dimensions(method = "PCA") 
+counts_scaled_PCA
+#counts_scaled_PCA %>% pivot_sample()
+```
+
+```{r}
+library(ggrepel)
+#plot PCA
+
+counts_scaled_PCA %>% pivot_sample() %>%
+  ggplot(aes(x = PC1, y = PC2, colour = dex, shape = cell)) +
+    geom_point(size = 4) +
+    geom_text_repel(aes(label = sample_name))
+```
+
+## Hierarchical clustering eith heatmaps
+```{r, out.width='70%'}
+library(tidyHeatmap, quietly = T)
+
+counts_scaled_PCA %>% 
+  keep_variable(.abundance = counts_scaled, top = 500) %>% #extract 500 most variable genes
+  as_tibble() %>%
+  heatmap(.column = sample_name, #create heatmap
+          .row = .feature,
+          .value = counts_scaled,
+          transform = log1p) %>%
+  add_tile(dex) %>%
+  add_tile(cell)
+  
+```
+

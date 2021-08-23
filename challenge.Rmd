@@ -1,0 +1,17 @@
+---
+title: "challenge"
+author: "Daniel López"
+date: "22/11/2023"
+output: html_document
+---
+
+This notebook serves aspractive for a data science workflow in R using methylation expression data.
+## Import libs. and data
+```{r}
+library(tidyverse)
+library(magrittr)
+
+raw <- read_delim("~/ML4Genom2021/data/subjects.txt")
+
+```
+

@@ -1,0 +1,337 @@
+---
+title: 'compgen2021: Week 3 exercises'
+author: 'O. Daniel López Olmos'
+output:
+  pdf_document: default
+  pdf: default
+---
+
+# Exercises for Week 3
+
+
+### Classification 
+For this set of exercises we will be using the gene expression and patient annotation data from the glioblastoma patient. You can read the data as shown below:
+```{r,readMLdataEx}
+library(compGenomRData)
+# get file paths
+fileLGGexp = system.file("extdata",
+                      "LGGrnaseq.rds",
+                      package="compGenomRData")
+fileLGGann = system.file("extdata",
+                      "patient2LGGsubtypes.rds",
+                      package="compGenomRData")
+
+# gene expression values
+geneExp <- readRDS(fileLGGexp)
+# transpose data in order to have features on the columns
+geneExp <- t(geneExp)
+
+# patient annotation
+patient <- readRDS(fileLGGann)
+
+# merge the data
+geneExp <- merge(patient, geneExp, by = "row.names" )
+# set sample ids
+rownames(geneExp) = geneExp[, 1]
+geneExp <- geneExp[, -1]
+```
+
+1. Our first task is to not use any data transformation and do classification. Run the k-NN classifier on the data without any transformation or scaling. What is the effect on classification accuracy for k-NN predicting the CIMP and noCIMP status of the patient? [Difficulty: **Beginner**]
+
+**solution:**
+
+Giving the example in the supervised learning chapter, here for both the training and testing predictions, the accuracy scores had a decrease(as expected due to no data preprocessing). For the training data, accuracy score dropped down ~10% and for the testing data ~13%.
+Note: here we dividied tha data
+```{r} 
+require(caret, quietly = T )
+set.seed(1212)
+
+data_idx <- createDataPartition(y = geneExp[,1], p = 0.7, )[[1]]
+trainingData <- geneExp[data_idx,]
+x_train <- trainingData[, -1]
+y_train <- trainingData[, 1]
+
+testData <- geneExp[-data_idx,]
+x_test <- testData[, -1]
+y_test <- testData[, 1]
+
+#instance and fit the model
+KNNfit <- knn3(x = x_train, y = y_train, 
+                 k = 5)
+
+# PREDICT DE CARET O DE STATS
+#predict for training data
+trainPreds <- predict(KNNfit, x_train, type = "class")
+
+#get confusion matrix
+confusionMatrix(data = y_train, reference = trainPreds)
+
+```
+
+
+```{r}
+#predict for testing data
+testPreds <- predict(KNNfit, x_test, type = "class")
+
+#confusion matrix
+confusionMatrix(data = y_test, reference = testPreds)
+```
+
+
+2. Bootstrap resampling can be used to measure the variability of the prediction error. Use bootstrap resampling with k-NN for the prediction accuracy. How different is it from cross-validation for different $k$s? [Difficulty: **Intermediate**]
+**solution:**
+We will use the caret function 'trainControl()' to set a resampling method and test boostrap and cross-validation with k=3,5,7 which are the most common k values.
+For this excercise, cross-validation strategy gives slightly better accuracy score, improving from ~75% with bootstrap to ~77% CV.
+note: Here we have only used the half of the total variables in the data, since R has some problems when making opperations with a large number of variables(this can be fixed changing the ppsize option in our .Rprofile file) so, the actual prediction accuracy could sustantally be improved whe using all variables. 
+```{r}
+set.seed(400)
+
+#split data variables in half
+geneExp <- geneExp[,1:10251]
+data_idx <- createDataPartition(y = geneExp[,1], p = 0.7, )[[1]]
+trainingData <- geneExp[data_idx,]
+x_train <- trainingData[, -1]
+y_train <- trainingData[, 1]
+
+testData <- geneExp[-data_idx,]
+x_test <- testData[, -1]
+y_test <- testData[, 1]
+#bootstrap resampling
+#define training control
+train_control <- trainControl(method = "boot", number = 10)
+#train the model
+bootModel <- train(subtype ~., data = trainingData, method = "knn",
+               trControl = train_control, 
+               tuneGrid = data.frame(k = c(3,5,7)))
+
+#plot prediction accuracy for each k
+plot(x = c(3,5,7), bootModel$results[, 2] * 100,
+     main = "Prediction accuracy using Bootstrap for k=3,5,7",
+     pch = 19,
+     ylab = "Prediction acuracy", xlab = "k")
+
+
+```
+
+```{r}
+#cross validation with k=3,5,7
+set.seed(406)
+
+#define training control
+crossValcontrol <- trainControl(method = "cv", number = 10)
+#train the model
+crossValmodel <- train(subtype ~., data = trainingData, method = "knn",
+               trControl = crossValcontrol, 
+               tuneGrid = data.frame(k = c(3,5,7)))
+
+#plot prediction error variability for each k
+plot(x = c(3,5,7), crossValmodel$results[, 2] * 100,
+     main = "Prediction accuracy using CV with k=3,5,7",pch = 19,
+     ylab = "Prediction accuracy", xlab = "k")
+
+```
+
+
+3. There are a number of ways to get variable importance for a classification problem. Run random forests on the classification problem above. Compare the variable importance metrics from random forest and the one obtained from DALEX. How many variables are the same in the top 10? [Difficulty: **Advanced**]
+**solution:**
+```{r}
+library(ranger)
+set.seed(735)
+
+ctlForest <- trainControl(method = "none", 
+                          classProbs = T,
+                          savePredictions = T)
+#instance model
+rforestModel <- train(subtype ~.,
+                      method = "ranger",
+                      data = trainingData,
+                      trControl = ctlForest,
+                      importance = "permutation", #permutation drop-out to compare with DALEX
+                      tuneGrid = data.frame(mtry = 10, min.node.size = 1, 
+                                            splitrule = "gini"))
+#plot the 10 most important variables
+plot(varImp(rforestModel), top = 10)
+```
+
+
+```{r}
+require(DALEX, quietly = T)
+#variable importance with DALEX
+
+
+set.seed(427)
+#permutation drop-out
+featImportance <- DALEX::explain(rforestModel, 
+                               label = "random forest", 
+                               data = trainingData[,-1], 
+                               #transform y to numerical with 1=CIMP and 2=noCIMP
+                               y = as.numeric(trainingData[,1]))
+
+visFeatImp <- feature_importance(featImportance, n_sample = 10,
+                                 #get a single-permutation-based measure
+                                 B = 1,
+                                 type = "difference")
+plot(visFeatImp)
+
+```
+
+
+4. Come up with a unified importance score by normalizing importance scores from random forests and DALEX, followed by taking the average of those scores. [Difficulty: **Advanced**]
+**solution:**
+```{r}
+require(BBmisc, quietly = T)
+
+#normalize importance scores from random forests
+impForest <- varImp(rforestModel)
+impForest <- BBmisc::normalize(impForest$importance)
+#normalize importance scores from DALEX
+impDalex <- explain(rforestModel, 
+                    label = "random forest", 
+                    data = x_train, 
+                    y = as.numeric(trainingData[,1]))
+
+impDalex <- normalize(impDalex)
+#taking the average of the scores
+#COMPARAR/CAMBIAR CON UNA FUNCION APPLY
+avgForest <- mean(impForest)
+avgDalex <- mean(impDalex)
+#create a df showing both scores
+impScore <- data.frame(random.forest.score = avgForest,
+                       DALEX.score = avgDalex)  
+
+head(impScore)
+```
+
+
+
+### Regression
+For this set of problems we will use the regression data set where we tried to predict the age of the sample from the methylation values. The data can be loaded as shown below: 
+```{r, readMethAgeex}
+
+# file path for CpG methylation and age
+fileMethAge <- system.file("extdata",
+                      "CpGmeth2Age.rds",
+                      package = "compGenomRData")
+
+# read methylation-age table
+ageMeth <- readRDS(fileMethAge)
+```
+
+1. Run random forest regression and plot the importance metrics. [Difficulty: **Beginner**]
+
+**solution:**
+```{r}
+set.seed(18)
+par(mfrow=c(1,2))
+
+#use only half of the variables
+ageMeth <- ageMeth[,1:13789]
+#remove variables with low variation
+ageMeth <- ageMeth[, c(TRUE, matrixStats::colSds(as.matrix(ageMeth[,-1]))>0.1)]
+data_idx2 <- createDataPartition(y = ageMeth[,1], p = 0.7, )[[1]]
+trainingData2 <- ageMeth[data_idx2,]
+
+testData2 <- ageMeth[-data_idx2,]
+
+trctrl <- trainControl(method = "none")
+
+#train the model
+rfRegModel <- train(Age~., 
+               data = trainingData2, 
+               method = "ranger",
+               trControl =trctrl,
+               # calculate importance
+               importance = "permutation", 
+               tuneGrid = data.frame(mtry = 50,
+                                     min.node.size = 5,
+                                     splitrule = "variance")
+               )
+
+
+plot(trainingData2$Age, rfRegModel$finalModel$predictions,
+     pch = 19, xlab = "Observed Age",
+     ylab = "OOB predicted Age")
+mtext(paste("R-squared",
+            format(rfRegModel$finalModel$r.squared, digits = 2)))
+
+# plot residuals
+plot(trainingData2$Age, (rfRegModel$finalModel$predictions -                    trainingData2$Age),
+     pch = 18, ylab = "Residuals (predicted-observed)",
+     xlab = "Observed Age", col = "blue3")
+abline(h = 0, col = "red4", lty = 2)
+```
+
+
+2. Split 20% of the methylation-age data as test data and run elastic net regression on the training portion to tune parameters and test it on the test portion. [Difficulty: **Intermediate**] 
+
+**solution:**
+```{r}
+library(glmnet)
+set.seed(848)
+
+#split the data
+dataIdx <- createDataPartition(y = ageMeth[,1], p = 0.8, )[[1]] #index for 80% of the data
+trainData <- ageMeth[dataIdx,]
+X_train <- trainData[, -1]
+Y_train <- trainData[, 1]
+
+testData <- ageMeth[-dataIdx,]
+X_test <- testData[, -1]
+Y_test <- testData[, 1]
+
+#do cross validation so we can get the best parameters
+ctrlNet <- trainControl(method = "cv", number = 10)
+
+#train the model
+netModel <- train(Age ~ ., data = trainData, 
+                 method = "glmnet",
+                 trControl = ctrlNet,
+                 # alpha and lambda parameters to try
+                 tuneGrid = data.frame(alpha = seq(0.1, 0.3, 0.5),
+                                       lambda = seq(0.1,0.7,0.05)))
+
+#best parameter values by cross-validation accuracy
+netModel$bestTune
+```
+
+```{r}
+#CHECAR SI EL PARAMETRO 'TRCONTROL' SE PUEDE USAR EL MODELO ANTERIOR
+#update the model with best parameters suggested
+UpdatedNetModel <- train(Age ~ ., data = trainData, 
+                 method = "glmnet",
+                 
+                 trControl = trainControl("none"),
+                 #set alpha and lambda as suggested
+                 tuneGrid = data.frame(alpha = 0.1,
+                                       lambda = 0.7))
+#predict using test data
+netPredictions <-predict.glmnet(UpdatedNetModel, X_test)
+#show accuracy
+#confusion.glmnet(netPredictions, newy = Y_test)
+class.res=predict(enetFit,testing[,-1])
+```
+
+3. Run an ensemble model for regression using the **caretEnsemble** or **mlr** package and compare the results with the elastic net and random forest model. Did the test accuracy increase?
+**HINT:** You need to install these extra packages and learn how to use them in the context of ensemble models. [Difficulty: **Advanced**] 
+
+**solution:**
+```{r}
+library(caretEnsemble)
+
+ensemblList <- caretList(Age ~., data = trainingData,
+                        trControl = ctrlNet,
+                        methodList = c("glm", "lm")
+                        )
+
+modelCor(resamples(ensemblList))
+```
+
+```{r}
+ensembleModel <- caretEnsemble(ensemblList, 
+                              metric = "accuracy",
+                              summaryFunction = twoClassSummary,
+                              classProbs = TRUE
+                              )
+summary(ensembleModel)
+```
+
